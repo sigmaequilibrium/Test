@@ -27,6 +27,14 @@ class SimulationResult:
     history: List[CarState]
 
 
+@dataclass
+class SimulationSnapshot:
+    steps: int
+    crashed: bool
+    finished: bool
+    state: CarState
+
+
 class DrivingSimulator:
     def __init__(
         self,
@@ -40,14 +48,29 @@ class DrivingSimulator:
         self.crashed = False
         self.finished = False
 
-    def step(self, action: str) -> CarState:
-        state = self.car.step(action, self.timestep)
+    def update(self, dt: float, action: Optional[str] = None) -> SimulationSnapshot:
+        resolved_action = action.strip().lower() if isinstance(action, str) else ""
+        if not resolved_action:
+            resolved_action = "coast"
+        resolved_action = COMMANDS.get(resolved_action, resolved_action)
+        state = self.car.step(resolved_action, dt)
         if self.track.is_wall(state.x, state.y):
             self.crashed = True
         if self.track.at_finish(state.x, state.y):
             self.finished = True
         self.history.append(state)
-        return state
+        return self.snapshot()
+
+    def snapshot(self) -> SimulationSnapshot:
+        return SimulationSnapshot(
+            steps=len(self.history) - 1,
+            crashed=self.crashed,
+            finished=self.finished,
+            state=self.history[-1],
+        )
+
+    def step(self, action: str) -> CarState:
+        return self.update(self.timestep, action).state
 
     def run_script(self, actions: Iterable[str], max_steps: Optional[int] = None) -> SimulationResult:
         for index, action in enumerate(actions):
@@ -55,7 +78,7 @@ class DrivingSimulator:
                 break
             if self.crashed or self.finished:
                 break
-            self.step(action)
+            self.update(self.timestep, action)
         return SimulationResult(
             steps=len(self.history) - 1,
             crashed=self.crashed,
@@ -118,14 +141,14 @@ def run_interactive(sim: DrivingSimulator) -> None:
             sim.reset()
             continue
 
-        command = input("Action (w/a/s/d/space or q to quit): ").lower()
+        command = input("Action (w/a/s/d/space or q to quit): ").strip().lower()
         if command == "q":
             break
         action = COMMANDS.get(command) or COMMANDS.get(command[:1])
-        if action is None:
+        if action is None and command:
             print("Unknown command. Use w/a/s/d/space.")
             continue
-        sim.step(action)
+        sim.update(sim.timestep, action)
 
 
 def main(script: Optional[str] = None, steps: int = 100) -> None:
