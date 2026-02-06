@@ -52,6 +52,22 @@ class SimulatorTests(unittest.TestCase):
         self.assertTrue(result.finished)
         self.assertFalse(result.crashed)
 
+    def test_update_coasts_when_no_action(self):
+        custom_track = Track.from_ascii(
+            [
+                "#####",
+                "#S..#",
+                "#..F#",
+                "#####",
+            ]
+        )
+        sim = DrivingSimulator(track=custom_track, timestep=1.0)
+        sim.update(1.0, "accelerate")
+        moving_state = sim.snapshot().state
+        sim.update(1.0, None)
+        coast_state = sim.snapshot().state
+        self.assertGreater(moving_state.speed, coast_state.speed)
+
     def test_parse_actions_from_script(self):
         actions = parse_actions_from_script("w, s, left, space")
         self.assertEqual(actions, ["accelerate", "brake", "left", "coast"])
