@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mobile Driving Simulator</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Mobile Driving Simulator</h1>
+        <p>Drive the car around the track and cross the green finish line.</p>
+        <p>Use touch controls or your keyboard arrow/WASD keys.</p>
+      </header>
+
+      <canvas id="simulator" aria-label="Driving simulator"></canvas>
+
+      <section class="status">
+        <div>Speed: <strong id="speed">0 km/h</strong></div>
+        <div>Laps: <strong id="lap">0</strong></div>
+        <div>Position: <strong id="position">0, 0</strong></div>
+        <div>Status: <strong id="message"></strong></div>
+      </section>
+
+      <section class="controls">
+        <button id="left" aria-label="Steer left">⟵ Left</button>
+        <button id="accelerate" aria-label="Accelerate">Accelerate</button>
+        <button id="right" aria-label="Steer right">Right ⟶</button>
+        <button id="brake" aria-label="Brake">Brake</button>
+        <button id="reset" aria-label="Reset">Reset</button>
+      </section>
+
+      <p class="notice">
+        Tip: Keep the orange car between the dark borders. Going off-track slows you down.
+      </p>
+    </main>
+
+    <script src="simulator.js"></script>
+  </body>
+</html>
