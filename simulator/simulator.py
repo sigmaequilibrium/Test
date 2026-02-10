@@ -1,160 +1,119 @@
-"""Interactive driving simulator."""
+"""CLI simulation runner for ML pathfinding."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Optional
+from pathlib import Path
+from typing import List, Optional
 
-from simulator.car import Car, CarState
-from simulator.track import Track, default_track
-
-
-COMMANDS = {
-    "w": "accelerate",
-    "s": "brake",
-    "a": "left",
-    "d": "right",
-    " ": "coast",
-    "space": "coast",
-}
+from simulator.grid import GridWorld
+from simulator.qlearning import QLearningPathfinder, TrainingStats
 
 
 @dataclass
-class SimulationResult:
-    steps: int
-    crashed: bool
-    finished: bool
-    history: List[CarState]
+class PathfindingResult:
+    stats: TrainingStats
+    solved: bool
+    path_length: int
+    rendered_grid: str
 
 
-class DrivingSimulator:
-    def __init__(
-        self,
-        track: Optional[Track] = None,
-        timestep: float = 0.2,
-    ) -> None:
-        self.track = track or default_track()
-        self.timestep = timestep
-        self.car = Car(*self.track.start, heading_deg=0)
-        self.history: List[CarState] = [self.car.snapshot()]
-        self.crashed = False
-        self.finished = False
-
-    def step(self, action: str) -> CarState:
-        state = self.car.step(action, self.timestep)
-        if self.track.is_wall(state.x, state.y):
-            self.crashed = True
-        if self.track.at_finish(state.x, state.y):
-            self.finished = True
-        self.history.append(state)
-        return state
-
-    def run_script(self, actions: Iterable[str], max_steps: Optional[int] = None) -> SimulationResult:
-        for index, action in enumerate(actions):
-            if max_steps is not None and index >= max_steps:
-                break
-            if self.crashed or self.finished:
-                break
-            self.step(action)
-        return SimulationResult(
-            steps=len(self.history) - 1,
-            crashed=self.crashed,
-            finished=self.finished,
-            history=self.history,
-        )
-
-    def render(self) -> str:
-        state = self.history[-1]
-        overlay = self.track.render((state.x, state.y))
-        dashboard = (
-            f"Speed: {state.speed:5.2f} m/s\n"
-            f"Heading: {state.heading_deg:6.1f}°\n"
-            f"Position: ({state.x:5.2f}, {state.y:5.2f})\n"
-            f"Status: {'FINISHED' if self.finished else 'CRASHED' if self.crashed else 'DRIVING'}"
-        )
-        return overlay + "\n\n" + dashboard
-
-    def reset(self) -> None:
-        self.car = Car(*self.track.start, heading_deg=0)
-        self.history = [self.car.snapshot()]
-        self.crashed = False
-        self.finished = False
-
-    @staticmethod
-    def explain_controls() -> str:
-        return (
-            "Controls:\n"
-            "  w - accelerate\n"
-            "  s - brake\n"
-            "  a - steer left\n"
-            "  d - steer right\n"
-            "  space - coast/maintain\n"
-            "  q - quit\n"
-        )
+def load_grid_file(path: str) -> List[str]:
+    rows = [line.strip() for line in Path(path).read_text().splitlines() if line.strip()]
+    if len(rows) != 20 or any(len(row) != 20 for row in rows):
+        raise ValueError("Grid file must contain exactly 20 rows with 20 characters each")
+    allowed = {".", "#"}
+    for row in rows:
+        if any(ch not in allowed for ch in row):
+            raise ValueError("Grid file must only use '.' for empty cells and '#' for walls")
+    return rows
 
 
-def parse_actions_from_script(script: str) -> List[str]:
-    parts = [part.strip().lower() for part in script.split(",") if part.strip()]
-    return [COMMANDS.get(part, part) for part in parts]
+def run_simulation(
+    episodes: int = 2500,
+    max_steps: int = 400,
+    wall_density: float = 0.2,
+    seed: int | None = None,
+    start: tuple[int, int] = (0, 0),
+    goal: tuple[int, int] = (19, 19),
+    alpha: float = 0.1,
+    gamma: float = 0.95,
+    epsilon: float = 1.0,
+    epsilon_decay: float = 0.995,
+    min_epsilon: float = 0.05,
+    grid_file: Optional[str] = None,
+) -> PathfindingResult:
+    env = (
+        GridWorld.from_rows(load_grid_file(grid_file), start=start, goal=goal)
+        if grid_file
+        else GridWorld.random(wall_density=wall_density, start=start, goal=goal, seed=seed)
+    )
+
+    agent = QLearningPathfinder(
+        env,
+        alpha=alpha,
+        gamma=gamma,
+        epsilon=epsilon,
+        epsilon_decay=epsilon_decay,
+        min_epsilon=min_epsilon,
+        seed=seed,
+    )
+
+    stats = agent.train(episodes=episodes, max_steps_per_episode=max_steps)
+    path, solved = agent.greedy_path(max_steps=max_steps)
+    rendered = env.render(path=path if solved else None, agent=path[-1])
+
+    return PathfindingResult(
+        stats=stats,
+        solved=solved,
+        path_length=len(path) - 1,
+        rendered_grid=rendered,
+    )
 
 
-def run_interactive(sim: DrivingSimulator) -> None:
-    print("Starting driving simulator. Reach F without touching walls!")
-    print(sim.explain_controls())
-    while True:
-        print(sim.render())
-        if sim.crashed:
-            print("You crashed! Resetting to start. Press q to quit or any key to continue.")
-            choice = input().strip().lower()
-            if choice == "q":
-                break
-            sim.reset()
-            continue
-        if sim.finished:
-            print("Congratulations! You reached the finish line! Press q to quit or any key to drive again.")
-            choice = input().strip().lower()
-            if choice == "q":
-                break
-            sim.reset()
-            continue
-
-        command = input("Action (w/a/s/d/space or q to quit): ").lower()
-        if command == "q":
-            break
-        action = COMMANDS.get(command) or COMMANDS.get(command[:1])
-        if action is None:
-            print("Unknown command. Use w/a/s/d/space.")
-            continue
-        sim.step(action)
-
-
-def main(script: Optional[str] = None, steps: int = 100) -> None:
-    sim = DrivingSimulator()
-    if script:
-        actions = parse_actions_from_script(script)
-        result = sim.run_script(actions, max_steps=steps)
-        print(sim.render())
-        print(
-            f"Completed in {result.steps} steps. "
-            f"Status: {'finished' if result.finished else 'crashed' if result.crashed else 'running'}"
-        )
-    else:
-        run_interactive(sim)
-
-
-if __name__ == "__main__":  # pragma: no cover
+def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Command-line driving simulator")
-    parser.add_argument(
-        "--script",
-        help="Comma separated list of commands (w,a,s,d,space) to run without interaction.",
-    )
-    parser.add_argument(
-        "--steps",
-        type=int,
-        default=100,
-        help="Maximum steps to simulate in scripted mode.",
-    )
+    parser = argparse.ArgumentParser(description="20x20 ML pathfinding simulator (Q-learning)")
+    parser.add_argument("--episodes", type=int, default=2500)
+    parser.add_argument("--max-steps", type=int, default=400)
+    parser.add_argument("--wall-density", type=float, default=0.2)
+    parser.add_argument("--seed", type=int)
+    parser.add_argument("--start", type=int, nargs=2, metavar=("X", "Y"), default=(0, 0))
+    parser.add_argument("--goal", type=int, nargs=2, metavar=("X", "Y"), default=(19, 19))
+    parser.add_argument("--alpha", type=float, default=0.1)
+    parser.add_argument("--gamma", type=float, default=0.95)
+    parser.add_argument("--epsilon", type=float, default=1.0)
+    parser.add_argument("--epsilon-decay", type=float, default=0.995)
+    parser.add_argument("--min-epsilon", type=float, default=0.05)
+    parser.add_argument("--grid-file", help="Path to a 20x20 grid file using '.' and '#' characters")
+
     args = parser.parse_args()
-    main(script=args.script, steps=args.steps)
+
+    result = run_simulation(
+        episodes=args.episodes,
+        max_steps=args.max_steps,
+        wall_density=args.wall_density,
+        seed=args.seed,
+        start=tuple(args.start),
+        goal=tuple(args.goal),
+        alpha=args.alpha,
+        gamma=args.gamma,
+        epsilon=args.epsilon,
+        epsilon_decay=args.epsilon_decay,
+        min_epsilon=args.min_epsilon,
+        grid_file=args.grid_file,
+    )
+
+    print(result.rendered_grid)
+    print()
+    print(f"Solved: {result.solved}")
+    print(f"Path length: {result.path_length}")
+    print(
+        f"Training: episodes={result.stats.episodes}, solved_episodes={result.stats.solved_episodes}, "
+        f"best_steps={result.stats.best_steps}"
+    )
+
+
+if __name__ == "__main__":
+    main()

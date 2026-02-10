@@ -1,51 +1,52 @@
-# Driving Simulator
+# 20x20 Machine-Learning Pathfinding Simulator
 
-This repository contains a lightweight, text-based driving simulator written in Python. The simulator models basic vehicle physics and lets you navigate a maze-like track from the start tile (`S`) to the finish tile (`F`) without hitting walls.
+This project provides a **fully customizable pathfinding simulation** on a fixed **20x20 grid**, trained using a reinforcement learning algorithm (**Q-learning**).
 
-## Features
+## What it does
 
-- 2D top-down track with walls, a start point, and a finish line.
-- Car physics: acceleration, braking, frictional coasting, and steering with configurable parameters.
-- Interactive mode with simple keyboard controls.
-- Scripted mode for replaying predefined command sequences.
+- Simulates an agent navigating from a start cell (`S`) to a goal cell (`G`) on a 20x20 map.
+- Supports random map generation with configurable wall density.
+- Supports loading a custom 20x20 obstacle map from a file.
+- Trains with Q-learning and then runs a greedy policy rollout to show the learned path.
+- Exposes tuning knobs for learning parameters and simulation settings.
 
-## Getting Started
-
-1. Ensure Python 3.11+ is available.
-2. Run the simulator in interactive mode:
-
-   ```bash
-   python run_sim.py
-   ```
-
-3. Use the controls to drive:
-   - `w`: accelerate
-   - `s`: brake
-   - `a`: steer left
-   - `d`: steer right
-   - `space`: coast / maintain
-   - `q`: quit
-
-## Scripted Runs
-
-Provide a comma-separated list of commands to test movement without interactivity:
+## Quick start
 
 ```bash
-python run_sim.py --script "w,w,w,a,a,w,w" --steps 25
+python run_sim.py --episodes 3000 --wall-density 0.18 --seed 7
 ```
 
-The command prints the final track state along with the car's speed, heading, and position.
+## Customization options
 
-## Project Layout
+### Environment
 
-- `simulator/car.py` — vehicle physics and state updates.
-- `simulator/track.py` — track representation, collision detection, and rendering.
-- `simulator/simulator.py` — simulation loop, controls, and rendering helpers.
-- `run_sim.py` — entry point for running the simulator.
+- `--start X Y` start coordinate (default: `0 0`)
+- `--goal X Y` goal coordinate (default: `19 19`)
+- `--wall-density FLOAT` random obstacle density for generated maps
+- `--grid-file PATH` load an exact 20x20 grid using:
+  - `.` for empty cell
+  - `#` for wall
 
-## Tests
+### Learning hyperparameters
 
-A small unit test suite validates the physics and track logic:
+- `--episodes INT` number of training episodes
+- `--max-steps INT` max steps per episode and rollout
+- `--alpha FLOAT` learning rate
+- `--gamma FLOAT` discount factor
+- `--epsilon FLOAT` initial exploration rate
+- `--epsilon-decay FLOAT` per-episode epsilon decay
+- `--min-epsilon FLOAT` lower bound for epsilon
+- `--seed INT` deterministic random seed
+
+## Example with a custom map
+
+`my_map.txt` must contain exactly 20 lines of 20 chars each.
+
+```bash
+python run_sim.py --grid-file my_map.txt --start 0 0 --goal 19 19 --episodes 5000
+```
+
+## Running tests
 
 ```bash
 python -m unittest
