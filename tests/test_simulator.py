@@ -1,60 +1,48 @@
 import unittest
 
-from simulator.car import Car
-from simulator.simulator import DrivingSimulator, parse_actions_from_script
-from simulator.track import Track, default_track
+from simulator.grid import GridWorld
+from simulator.qlearning import QLearningPathfinder
+from simulator.simulator import run_simulation
 
 
-class CarPhysicsTests(unittest.TestCase):
-    def test_acceleration_and_braking(self):
-        car = Car(0, 0, max_speed=10, acceleration=5, brake_deceleration=5, friction=0)
-        car.step("accelerate", dt=1.0)
-        self.assertAlmostEqual(car.speed, 5)
-        car.step("accelerate", dt=1.0)
-        self.assertAlmostEqual(car.speed, 10)
-        car.step("brake", dt=1.0)
-        self.assertAlmostEqual(car.speed, 5)
-
-    def test_turning_changes_heading(self):
-        car = Car(0, 0, heading_deg=0, turn_rate=90)
-        car.step("left", dt=1.0)
-        self.assertEqual(car.heading_deg, 90)
-        car.step("right", dt=0.5)
-        self.assertEqual(car.heading_deg, 45)
-
-
-class TrackTests(unittest.TestCase):
-    def test_track_parsing_requires_start_and_finish(self):
+class GridWorldTests(unittest.TestCase):
+    def test_requires_20x20(self):
         with self.assertRaises(ValueError):
-            Track.from_ascii(["..."])
+            GridWorld(width=10, height=20)
 
-    def test_collision_detection(self):
-        track = default_track()
-        self.assertTrue(track.is_wall(-1, 0))
-        self.assertTrue(track.is_wall(track.width, 0))
+    def test_transition_hits_wall(self):
+        env = GridWorld(walls={(1, 0)})
+        next_state, reward, done = env.transition((0, 0), 3)
+        self.assertEqual(next_state, (0, 0))
+        self.assertEqual(reward, -5.0)
+        self.assertFalse(done)
 
 
-class SimulatorTests(unittest.TestCase):
-    def test_reaches_finish_with_script(self):
-        custom_track = Track.from_ascii(
-            [
-                "####",
-                "#SF#",
-                "####",
-            ]
+class QLearningTests(unittest.TestCase):
+    def test_finds_path_in_open_grid(self):
+        env = GridWorld(walls=set())
+        agent = QLearningPathfinder(env, epsilon_decay=0.99, seed=1)
+        stats = agent.train(episodes=1200, max_steps_per_episode=200)
+        path, solved = agent.greedy_path(max_steps=200)
+
+        self.assertGreater(stats.solved_episodes, 0)
+        self.assertTrue(solved)
+        self.assertEqual(path[0], env.start)
+        self.assertEqual(path[-1], env.goal)
+
+
+class IntegrationTests(unittest.TestCase):
+    def test_run_simulation(self):
+        result = run_simulation(
+            episodes=1000,
+            max_steps=200,
+            wall_density=0.0,
+            seed=42,
         )
-        sim = DrivingSimulator(track=custom_track, timestep=1.0)
-        sim.car.max_speed = 1
-        sim.car.acceleration = 1
-        sim.car.brake_deceleration = 1
-
-        result = sim.run_script(["accelerate", "accelerate", "accelerate"], max_steps=5)
-        self.assertTrue(result.finished)
-        self.assertFalse(result.crashed)
-
-    def test_parse_actions_from_script(self):
-        actions = parse_actions_from_script("w, s, left, space")
-        self.assertEqual(actions, ["accelerate", "brake", "left", "coast"])
+        self.assertTrue(result.solved)
+        self.assertGreater(result.path_length, 0)
+        self.assertIn("S", result.rendered_grid)
+        self.assertIn("G", result.rendered_grid)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Run the command-line driving simulator."""
+"""Run the command-line pathfinding simulator."""
 
 from simulator.simulator import main
 
