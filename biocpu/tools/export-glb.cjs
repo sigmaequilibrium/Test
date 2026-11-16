@@ -38,6 +38,7 @@ const CDN = 'https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/';
       for (const k of ['ref', 'page', 'pageQ', 'land', 'excite', 'fluor', 'sensor', 'bus', 'asic', 'rec', 'slm', 'teacher']) s[k] = 0;
       s.grow = 1; s.tint = 1; s.gain = 1;
       api.setSim(false);
+      window.PWC.state.t = 9.5; // rest step: every light envelope is 0, onFrame recomputes signals from t
       api.renderOnce();
       api.root.updateMatrixWorld(true);
 

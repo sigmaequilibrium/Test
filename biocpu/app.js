@@ -69,6 +69,8 @@
     imprintStep: 0,
     imprintT: 0,
     imprintAll: false,
+    // true freezes the imprint animation on its current frame: the reduced-motion default, and after Stop
+    imprintHold: reduced,
     labels: stageEl.clientWidth >= 620,
     spin: false,
     tokensShown: -1,
@@ -96,6 +98,7 @@
   if (!api) {
     $('#fallback').hidden = false;
     $('.controls').hidden = true;
+    $('.app').classList.add('nogl');
     api = stubScene();
   }
 
@@ -119,7 +122,7 @@
       setPage: function (k) {
         page = ((k % 9) + 9) % 9;
       },
-      stimulate: noop, setSim: noop, quiet: noop, setExplode: noop, setSelected: noop, focus: noop,
+      stimulate: noop, prime: noop, stepSim: noop, orbit: noop, setSim: noop, quiet: noop, setExplode: noop, setSelected: noop, focus: noop,
       resetView: noop, setAutoRotate: noop, setToday: noop, getExplode: function () { return 0; }, projectAnchors: function () { return []; }, refreshTheme: noop,
       start: function () {
         var last = performance.now();
@@ -157,6 +160,19 @@
       else if (t >= C[0] && t < O[1]) api.stimulate(dt * 0.4 * (1 - ss(O[0], O[1], t)));
     }
   }
+  // The network runs whenever motion is allowed. Under reduced motion it runs only while the
+  // timeline on show is playing, so a paused frame is a true still.
+  function syncSim() {
+    // a held imprint frame (Stop, or reduced motion) is a still, so the network holds with it
+    api.setSim(state.mode === 'imprint' ? !state.imprintHold : !reduced || state.playing);
+  }
+  // Reduced motion, paused: the network is off, so pose the tissue by hand for the frame on show.
+  function poseTissue() {
+    if (!reduced || state.playing) return;
+    api.quiet();
+    runSignals(state.t, 0, false);
+    if (state.t > T.write[0] && state.t < T.readout[1]) api.prime(state.t < T.compute[0] ? 1 : 0.4);
+  }
   var trainClock = 0;
   var trainPage = 0;
   function imprintSignals(step, u, dt) {
@@ -183,11 +199,7 @@
         break;
       }
       case 'grow':
-        s.grow = ss(0, 0.85, u); s.tint = 0; s.gain = 0.2; s.spont = 7;
-        break;
-      case 'express':
-        s.tint = ss(0.1, 0.9, u); s.gain = 0.2; s.spont = 4;
-        s.excite = 0.25 * ss(0.5, 0.9, u);
+        s.grow = ss(0, 0.85, u); s.tint = ss(0.8, 1, u); s.gain = 0.2; s.spont = 7;
         break;
       case 'probe':
       case 'train':
@@ -200,7 +212,7 @@
           api.setPage(trainPage);
         }
         var tt = trainClock / period;
-        s.gain = step.fx === 'train' ? 0.2 + 0.8 * u : 1;
+        s.gain = step.fx === 'train' ? 0.2 + 0.8 * u : 0.2;
         s.ref = env(tt, 0, 0.5, 0.1);
         s.page = env(tt, 0.04, 0.5, 0.1);
         s.land = env(tt, 0.08, 0.55, 0.1);
@@ -229,24 +241,33 @@
           api.setPage(state.cycle % api.pageCount);
         }
       }
-      runSignals(state.t, dt, state.playing);
+      // paused frames still drive the tissue while the network runs (it is off when paused under reduced motion)
+      runSignals(state.t, dt, state.playing || !reduced);
       syncRunUI();
     } else {
       var step = IMP.steps[state.imprintStep];
       var dur = step.dur || 7;
-      state.imprintT += dt;
-      if (state.imprintT >= dur) {
-        if (state.imprintAll && state.imprintStep < IMP.steps.length - 1) {
-          setImprintStep(state.imprintStep + 1, true);
-          step = IMP.steps[state.imprintStep];
-        } else if (state.imprintAll) {
-          state.imprintAll = false;
-          $('#imprint-play').textContent = 'Play all';
-          state.imprintT = dur;
-        } else if (step.loop === false) state.imprintT = dur;
-        else state.imprintT = 0;
+      if (!state.imprintHold) {
+        state.imprintT += dt;
+        if (state.imprintT >= dur) {
+          if (state.imprintAll && state.imprintStep < IMP.steps.length - 1) {
+            setImprintStep(state.imprintStep + 1);
+            step = IMP.steps[state.imprintStep];
+            dur = step.dur || 7;
+          } else if (state.imprintAll) {
+            state.imprintAll = false;
+            state.imprintHold = reduced;
+            $('#imprint-play').textContent = 'Play all';
+            syncSim();
+            // reduced motion rests on the last step's still; otherwise the last step goes on looping
+            if (reduced) setImprintStep(state.imprintStep, true);
+            else state.imprintT = dur;
+          } else if (step.loop === false) state.imprintT = dur;
+          else state.imprintT = 0;
+        }
       }
-      imprintSignals(step, Math.min(1, state.imprintT / dur), dt);
+      // a held frame gets dt 0, which also stops the pulse clock and the stimulation
+      imprintSignals(step, Math.min(1, state.imprintT / dur), state.imprintHold ? 0 : dt);
     }
     hudAcc += dt;
     if (hudAcc > 0.066) {
@@ -267,7 +288,7 @@
   function buildLabels() {
     if (!hasScene) return;
     api.projectAnchors(projected).forEach(function (a) {
-      var c = el('div', 'callout' + (a.quiet ? ' quiet' : ''));
+      var c = el('div', 'callout' + (a.quiet ? ' quiet' : '') + (a.id === 'today' ? ' today' : ''));
       c.appendChild(el('span', 'dot'));
       var text = a.id === 'scale' ? '10 mm' : a.id === 'teacher' ? D.TEACHER_LABEL : a.id === 'today' ? D.TODAY_LABEL : a.id === 'ref' ? D.REF_LABEL : partsById[a.id] ? partsById[a.id].short : a.id;
       var tag = el(a.quiet ? 'span' : 'button', 'tag', text);
@@ -280,41 +301,175 @@
       c.appendChild(tag);
       c.hidden = true;
       labelsEl.appendChild(c);
-      callouts[a.id] = { root: c, tag: tag };
+      // w: the tag's unwrapped width, measured when first shown. Captions (quiet tags) also keep
+      // mw, the max-width last written (0 for none), and h, their height at that width.
+      callouts[a.id] = { root: c, tag: tag, w: 0, mw: 0, h: 0 };
     });
   }
+  function resetTagWidths() {
+    for (var id in callouts) callouts[id].w = 0;
+    ctlBox = null;
+    headBox = null;
+  }
+  // The control pills as one box in stage coordinates, measured once per layout. A part tag that would land on it is left out.
+  var ctlBox = null;
+  var headBox = null; // the title's text box, for the same purpose
+  function controlBox() {
+    var s = stageEl.getBoundingClientRect();
+    var b = { x0: 1e9, x1: -1e9, y0: 1e9 };
+    var pills = document.querySelectorAll('.controls .ctl');
+    for (var i = 0; i < pills.length; i++) {
+      var r = pills[i].getBoundingClientRect();
+      if (!r.width) continue;
+      b.x0 = Math.min(b.x0, r.left - s.left);
+      b.x1 = Math.max(b.x1, r.right - s.left);
+      b.y0 = Math.min(b.y0, r.top - s.top);
+    }
+    return b;
+  }
+  function setHidden(c, hide) {
+    if (c.root.hidden !== hide) c.root.hidden = hide;
+  }
+  // sizes are measured in whatever font is up at the time, so measure again once the web fonts land
+  if (document.fonts) {
+    if (document.fonts.ready) document.fonts.ready.then(resetTagWidths);
+    if (document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', resetTagWidths);
+  }
+  window.addEventListener('resize', resetTagWidths);
+  var TAG_LEAD = 22; // px from the anchor dot to a tag, matching `.callout .tag { left: 22px }`
   function placeLabels() {
     if (!hasScene) return;
     var w = stageEl.clientWidth;
     var h = stageEl.clientHeight;
     var list = api.projectAnchors(projected);
     var cx = w / 2;
-    var sides = { l: [], r: [] };
+    var tags = [];
+    var caps = [];
+    if (!ctlBox) ctlBox = controlBox();
     for (var i = 0; i < list.length; i++) {
       var a = list[i];
       var c = callouts[a.id];
       if (!c) continue;
       var show = (state.labels || a.id === 'today') && a.on && a.x > 4 && a.x < w - 4 && a.y > 70 && a.y < h - 46;
-      c.root.hidden = !show;
-      if (!show) continue;
+      if (!show) {
+        setHidden(c, true);
+        continue;
+      }
       var left = a.side === 0 ? false : a.x < cx;
+      var dx = 0;
+      if (a.quiet) {
+        // captions sit just right of their anchor and wrap in the room left before the stage edge
+        setHidden(c, false);
+        if (!c.w) {
+          c.tag.style.maxWidth = '';
+          c.mw = c.h = 0;
+          c.w = c.tag.offsetWidth;
+        }
+        var mw = Math.max(90, Math.round(w - a.x - 14));
+        // the max-width is written only while the caption has to wrap, so turning the model does not touch layout otherwise
+        var cap = c.w > mw ? mw : 0;
+        if (cap !== c.mw) {
+          c.mw = cap;
+          c.h = 0;
+          c.tag.style.maxWidth = cap ? cap + 'px' : '';
+        }
+        if (!c.h) c.h = c.tag.offsetHeight;
+        dx = Math.min(0, w - 8 - (a.x + 6 + Math.min(c.w, mw)));
+        var capX = a.x + 6 + dx;
+        caps.push({ y: a.y, c: c, dx: dx, x0: capX, x1: capX + Math.min(c.w, mw), up: a.id !== 'today', top: 0, bot: 0 });
+      } else {
+        // part tags: flip to the other side when this one would cross the stage edge, then shift by what is left over.
+        // Whether one is shown is settled in spread(); it is unhidden here only to be measured.
+        if (!c.w) {
+          setHidden(c, false);
+          c.w = c.tag.offsetWidth;
+        }
+        var roomL = a.x - TAG_LEAD - c.w - 4;
+        var roomR = w - 4 - (a.x + TAG_LEAD + c.w);
+        if (left && roomL < 0) left = false;
+        else if (!left && roomR < 0 && roomL >= 0) left = true;
+        dx = left ? Math.max(0, -roomL) : Math.min(0, roomR);
+      }
       c.root.style.transform = 'translate(' + a.x.toFixed(1) + 'px,' + a.y.toFixed(1) + 'px)';
       c.root.classList.toggle('left', left);
       c.root.classList.toggle('sel', state.selected === a.id);
-      if (!a.quiet) (left ? sides.l : sides.r).push({ y: a.y, c: c });
+      if (!a.quiet) {
+        var x0 = (left ? a.x - TAG_LEAD - c.w : a.x + TAG_LEAD) + dx;
+        tags.push({ y: a.y, c: c, dx: dx, left: left, x0: x0, x1: x0 + c.w, py: 0 });
+      }
     }
-    spread(sides.l);
-    spread(sides.r);
+    settle(caps);
+    spread(tags, h);
+    // an upward caption that meets the title or a shown part tag is left out
+    if (!headBox) {
+      var hr = document.createRange();
+      hr.selectNodeContents($('.masthead h1'));
+      var hb = hr.getBoundingClientRect();
+      var sb = stageEl.getBoundingClientRect();
+      headBox = { x0: hb.left - sb.left, x1: hb.right - sb.left, y1: hb.bottom - sb.top };
+    }
+    for (var ci = 0; ci < caps.length; ci++) {
+      var k = caps[ci];
+      if (!k.up) continue;
+      var clash = k.top < headBox.y1 && k.x0 < headBox.x1 && headBox.x0 < k.x1;
+      for (var ti = 0; !clash && ti < tags.length; ti++) {
+        var t = tags[ti];
+        clash = !t.c.root.hidden && k.x0 < t.x1 && t.x0 < k.x1 && k.top < t.py + 11 && t.py - 11 < k.bot;
+      }
+      if (clash) setHidden(k.c, true);
+    }
   }
-  function spread(items) {
+  // Captions are not part of the 25px spread below. One that would overlap a caption anchored above it moves down clear of it.
+  function settle(caps) {
+    caps.sort(function (p, q) {
+      return p.y - q.y;
+    });
+    for (var i = 0; i < caps.length; i++) {
+      var k = caps[i];
+      // a caption's box grows upward from 11px under its anchor; the real-size caption hangs down from 11px above it
+      k.top = k.up ? k.y + 11 - k.c.h : k.y - 11;
+      var dy = 0;
+      for (var j = 0; j < i; j++) {
+        var p = caps[j];
+        if (k.x0 < p.x1 && p.x0 < k.x1 && k.top + dy < p.bot + 2 && k.top + dy + k.c.h > p.top) dy = p.bot + 2 - k.top;
+      }
+      // keep an upward caption clear of the control pills
+      if (k.up && ctlBox && k.x0 < ctlBox.x1 && ctlBox.x0 < k.x1 && k.top + dy + k.c.h > ctlBox.y0 - 2) dy = ctlBox.y0 - 2 - k.c.h - k.top;
+      k.top += dy;
+      k.bot = k.top + k.c.h;
+      k.c.tag.style.transform = k.dx || dy ? 'translate(' + k.dx.toFixed(1) + 'px,' + dy.toFixed(1) + 'px)' : '';
+    }
+  }
+  // Tags keep 25px apart down each side. One that was flipped or shifted at a stage edge can also
+  // land on a tag from the other side; it then drops below that one too. A tag whose text would
+  // end up on the control pills, or that would be cut by the bottom of the stage, is left out.
+  function spread(items, stageH) {
     items.sort(function (p, q) {
       return p.y - q.y;
     });
-    var prev = -1e9;
+    var prevL = -1e9;
+    var prevR = -1e9;
     for (var i = 0; i < items.length; i++) {
-      var y = Math.max(items[i].y, prev + 25);
-      items[i].c.tag.style.transform = 'translateY(' + (y - items[i].y).toFixed(1) + 'px)';
-      prev = y;
+      var it = items[i];
+      var y = Math.max(it.y, (it.left ? prevL : prevR) + 25);
+      // each pass can only move the tag further down; the pass limit is a backstop
+      for (var pass = 0, moved = true; moved && pass < items.length; pass++) {
+        moved = false;
+        for (var j = 0; j < i; j++) {
+          var p = items[j];
+          var below = p.py + 25;
+          if (p.left !== it.left && it.x0 < p.x1 + 4 && p.x0 < it.x1 + 4 && y > p.py - 25 && below - y > 0.01) {
+            y = below;
+            moved = true;
+          }
+        }
+      }
+      it.py = y;
+      if (it.left) prevL = y;
+      else prevR = y;
+      it.c.tag.style.transform = 'translate(' + it.dx.toFixed(1) + 'px,' + (y - it.y).toFixed(1) + 'px)';
+      // the tag box is 22px tall around y and its text ends about 6px under y
+      setHidden(it.c, y + 11 > stageH || (y + 6 > ctlBox.y0 && it.x0 < ctlBox.x1 && ctlBox.x0 < it.x1));
     }
   }
   var tipEl = $('#tip');
@@ -326,9 +481,10 @@
     var r = stageEl.getBoundingClientRect();
     tipEl.textContent = partsById[id].name;
     tipEl.appendChild(el('small', null, D.STATUS[partsById[id].status].label));
-    tipEl.style.left = Math.min(x - r.left, r.width - 190) + 'px';
-    tipEl.style.top = y - r.top + 'px';
+    // shown before it is measured (a hidden tip is 0 wide); 20 and 18 are the tip's 12px, 14px offset plus a margin
     tipEl.hidden = false;
+    tipEl.style.left = Math.max(0, Math.min(x - r.left, r.width - tipEl.offsetWidth - 20)) + 'px';
+    tipEl.style.top = Math.max(0, Math.min(y - r.top, r.height - tipEl.offsetHeight - 18)) + 'px';
   }
 
   // ---------------------------------------------------------------- parts
@@ -350,14 +506,19 @@
         key.appendChild(li);
       });
       card.appendChild(key);
-      card.appendChild(el('p', 'noteline', D.INTRO.hint));
+      // the hint is about handling the model, so it is left out when there is none
+      if (hasScene) card.appendChild(el('p', 'noteline', D.INTRO.hint));
     } else {
       var head = el('div', 'head');
       head.appendChild(el('h2', null, p.name));
       var close = el('button', 'linkbtn', 'Show all');
       close.type = 'button';
-      close.addEventListener('click', function () {
+      close.addEventListener('click', function (ev) {
+        // this button is rebuilt away with the card; a keyboard press (detail 0) hands focus back to the part's row
+        var id = p.id;
         select(null);
+        var row = ev.detail === 0 && document.querySelector('.partrow[data-id="' + id + '"]');
+        if (row) row.focus();
       });
       head.appendChild(close);
       card.appendChild(head);
@@ -395,8 +556,14 @@
         b.appendChild(sw);
         b.appendChild(el('span', 'nm', p.name));
         b.appendChild(statusChip(p.status));
-        b.addEventListener('click', function () {
+        b.addEventListener('click', function (ev) {
           select(state.selected === p.id ? null : p.id);
+          // selecting scrolls the pane to the card, so a keyboard press (detail 0) takes focus there too
+          if (ev.detail === 0 && state.selected) {
+            var h = $('h2', detailEl);
+            h.tabIndex = -1;
+            h.focus();
+          }
         });
         li.appendChild(b);
         ul.appendChild(li);
@@ -449,9 +616,13 @@
       b.appendChild(el('span', 'body', s.body));
       if (s.power) b.appendChild(el('span', 'pw', s.power));
       b.addEventListener('click', function () {
-        state.t = s.t0 + 0.02;
-        api.quiet();
-        if (i > T_INDEX.write) api.stimulate(1);
+        // paused: park mid-step, where the step's light is fully on, not on its dark first frame
+        state.t = state.playing ? s.t0 + 0.02 : (s.t0 + s.t1) / 2;
+        if (reduced && !state.playing) poseTissue();
+        else {
+          api.quiet();
+          if (i > T_INDEX.write || (!state.playing && i === T_INDEX.write)) api.stimulate(1);
+        }
         syncRunUI(true);
       });
       li.appendChild(b);
@@ -462,22 +633,31 @@
     $('#run-play').addEventListener('click', function () {
       state.playing = !state.playing;
       this.textContent = state.playing ? 'Pause' : 'Play';
-      api.setSim(state.playing || !reduced);
+      syncSim();
     });
     scrub.addEventListener('input', function () {
-      state.t = (scrub.value / 1000) * RUN.period;
+      // the slider's maximum would be t = period, which belongs to no step
+      state.t = Math.min(RUN.period - 0.001, (scrub.value / 1000) * RUN.period);
       scrubbing = true;
+      poseTissue();
       syncRunUI(true);
     });
-    scrub.addEventListener('change', function () {
+    // 'change' does not fire when a drag ends on the value it started from, so the release also ends a scrub
+    function endScrub() {
       scrubbing = false;
-    });
+    }
+    scrub.addEventListener('change', endScrub);
+    scrub.addEventListener('blur', endScrub);
+    window.addEventListener('pointerup', endScrub);
+    window.addEventListener('pointercancel', endScrub);
   }
   var T_INDEX = {};
   RUN.steps.forEach(function (s, i) {
     T_INDEX[s.id] = i;
   });
   var lastClock = '';
+  var lastValueText = '';
+  var capPage = -1;
   function syncRunUI(force) {
     var idx = -1;
     for (var i = 0; i < RUN.steps.length; i++) if (state.t >= RUN.steps[i].t0 && state.t < RUN.steps[i].t1) idx = i;
@@ -496,6 +676,12 @@
       lastClock = clock;
       $('#run-clock').textContent = clock;
     }
+    // what a screen reader hears for the slider, in place of its raw 0 to 1000 value
+    var valueText = clock + ' of ' + RUN.period + ' s' + (idx >= 0 ? ', ' + RUN.steps[idx].title : '');
+    if (valueText !== lastValueText) {
+      lastValueText = valueText;
+      scrub.setAttribute('aria-valuetext', valueText);
+    }
     var page = api.getPage();
     var n = page + (state.t >= T.decode[0] + 0.5 ? 1 : 0);
     if (n !== state.tokensShown) {
@@ -504,6 +690,10 @@
       box.textContent = '';
       box.appendChild(el('span', 'prompt', RUN.prompt));
       for (var k = 0; k < n; k++) box.appendChild(el('span', 'tok' + (k === n - 1 ? ' new' : ''), RUN.tokens[k % RUN.tokens.length]));
+    }
+    // when the cycle wraps the page number goes up but the token count above does not, so the caption has its own cache
+    if (page !== capPage) {
+      capPage = page;
       $('#hud-page-cap').textContent = 'Page ' + (page + 1) + ' of ' + api.pageCount + ' leaving the crystal';
     }
   }
@@ -514,6 +704,7 @@
     if (!hudColors) hudColors = { bg: cssVar('--stage'), page: cssVar('--w-page'), fluor: cssVar('--w-fluor'), line: cssVar('--stage-line') };
     var G = D.PAGE_G || 10;
     var ctx = hudPage.getContext('2d');
+    if (!ctx) return;
     var S = hudPage.width;
     ctx.fillStyle = hudColors.bg;
     ctx.fillRect(0, 0, S, S);
@@ -572,7 +763,9 @@
       if (s.gap) b.appendChild(el('span', 'pw', s.gap));
       b.addEventListener('click', function () {
         state.imprintAll = false;
+        state.imprintHold = reduced;
         $('#imprint-play').textContent = 'Play all';
+        syncSim();
         setImprintStep(i);
       });
       li.appendChild(b);
@@ -580,16 +773,27 @@
       impBtns.push(b);
     });
     $('#imprint-play').addEventListener('click', function () {
+      // Play all runs the whole sequence from step 1; Stop freezes the frame on show
       state.imprintAll = !state.imprintAll;
+      state.imprintHold = !state.imprintAll;
       this.textContent = state.imprintAll ? 'Stop' : 'Play all';
-      if (state.imprintAll) setImprintStep(state.imprintStep >= IMP.steps.length - 1 ? 0 : state.imprintStep);
+      syncSim();
+      if (state.imprintAll) setImprintStep(0);
     });
   }
+  var IMP_POSED = { probe: 1, calibrate: 1, train: 1, run: 1 }; // effects whose still frame shows the tissue responding
   function setImprintStep(i, keepScroll) {
+    var step = IMP.steps[i];
+    var hold = state.imprintHold;
     state.imprintStep = i;
-    state.imprintT = 0;
-    trainClock = 0;
+    // held (reduced motion): a representative still, 60% through the step and mid-pulse, not its dark first frame
+    state.imprintT = hold ? 0.6 * (step.dur || 7) : 0;
+    trainClock = hold ? 0.3 : 0;
     api.quiet();
+    if (hold) {
+      imprintSignals(step, 0.6, 0); // sets how much tissue is grown before it is posed
+      if (IMP_POSED[step.fx]) api.prime(1);
+    }
     for (var j = 0; j < impBtns.length; j++) {
       if (j === i) impBtns[j].setAttribute('aria-current', 'step');
       else impBtns[j].removeAttribute('aria-current');
@@ -632,7 +836,6 @@
     P.items.forEach(function (it) {
       var row = el('div', 'dotrow' + (it.group === 'tissue' ? ' hot' : ''));
       row.setAttribute('role', 'listitem');
-      row.title = it.note || '';
       row.appendChild(el('span', 'nm', it.name));
       var tr = el('div', 'track');
       tr.style.setProperty('--decades', decades);
@@ -644,6 +847,8 @@
       row.appendChild(tr);
       var val = el('span', 'val');
       row.appendChild(val);
+      // visible text, not a title tooltip: touch and keyboard users can read it too
+      if (it.note) row.appendChild(el('span', 'note', it.note));
       host.appendChild(row);
       dotRows.push({ it: it, row: row, dot: dot, val: val });
     });
@@ -686,12 +891,18 @@
   }
   function updatePower() {
     dotRows.forEach(function (r) {
-      var v = powerNow(r.it);
+      // without the 3D scene no network is running, so the firing row shows its on-value and tick with no live dot
+      var fixed = !hasScene && r.it.mode === 'fire';
+      var v = fixed ? r.it.peak : powerNow(r.it);
       var off = v < P.min;
       r.row.classList.toggle('off', off);
+      r.dot.hidden = fixed;
       r.dot.style.left = (off ? 0 : xOf(v) * 100) + '%';
       r.val.textContent = off ? 'off' : fmtW(v);
-      r.row.setAttribute('aria-label', r.it.name + ': ' + (off ? 'off' : fmtW(v)) + ' now, ' + fmtW(r.it.peak) + ' when on');
+      r.row.setAttribute(
+        'aria-label',
+        r.it.name + ': ' + (fixed ? '' : (off ? 'off' : fmtW(v)) + ' now, ') + fmtW(r.it.peak) + ' when on' + (r.it.note ? '. ' + r.it.note : '')
+      );
     });
   }
 
@@ -747,11 +958,16 @@
     if (wantMode !== state.mode) {
       state.mode = wantMode;
       api.quiet();
-      if (wantMode === 'imprint') setImprintStep(state.imprintStep, true);
-      else {
+      if (wantMode === 'imprint') {
+        syncSim();
+        setImprintStep(state.imprintStep, true);
+      } else {
         state.imprintAll = false;
+        state.imprintHold = reduced;
         $('#imprint-play').textContent = 'Play all';
         api.setPage(state.cycle % api.pageCount);
+        syncSim();
+        poseTissue();
       }
     }
     if (name !== 'parts' && state.selected && prev === 'parts') {
@@ -786,6 +1002,8 @@
 
   // ------------------------------------------------------------- controls
   $('#explode').addEventListener('input', function () {
+    // exploding refits the camera to the module, so leave the real-size view first
+    if ($('#btn-today').getAttribute('aria-pressed') === 'true') setToday(false);
     api.setExplode(this.value / 100, true);
   });
   $('#btn-labels').setAttribute('aria-pressed', String(state.labels));
@@ -804,11 +1022,8 @@
     if (on) {
       $('#explode').value = 0;
       api.setExplode(0, false);
-      if (state.selected) {
-        state.selected = null;
-        renderDetail();
-        applyFocus();
-      }
+      // select(null) also clears the highlighted row; the camera move it starts is replaced by setToday's below
+      if (state.selected) select(null);
     }
     api.setToday(on);
   }
@@ -824,8 +1039,33 @@
     api.resetView();
   });
   document.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Escape' && state.selected) select(null);
+    if (ev.key !== 'Escape' || !state.selected) return;
+    // the card is rebuilt, so focus inside it goes back to the part's row
+    var id = state.selected;
+    var inCard = detailEl.contains(document.activeElement);
+    select(null);
+    var row = inCard && document.querySelector('.partrow[data-id="' + id + '"]');
+    if (row) row.focus();
   });
+  if (hasScene) {
+    // keyboard route to what dragging and the wheel do
+    stageEl.tabIndex = 0;
+    stageEl.setAttribute('aria-label', '3D model of the concept module. Arrow keys turn it, plus and minus zoom.');
+    stageEl.addEventListener('keydown', function (ev) {
+      if (ev.target !== stageEl || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      // a held key repeats many times a second, so repeats take a smaller step
+      var a = ev.repeat ? Math.PI / 60 : Math.PI / 18;
+      if (ev.key === 'ArrowLeft') api.orbit(-a, 0, 1);
+      else if (ev.key === 'ArrowRight') api.orbit(a, 0, 1);
+      else if (ev.key === 'ArrowUp') api.orbit(0, -a / 2, 1);
+      else if (ev.key === 'ArrowDown') api.orbit(0, a / 2, 1);
+      else if (ev.key === '+' || ev.key === '=') api.orbit(0, 0, 0.85);
+      else if (ev.key === '-' || ev.key === '_') api.orbit(0, 0, 1 / 0.85);
+      else return;
+      ev.preventDefault();
+      onHover(null); // whatever was under the pointer has turned away
+    });
+  }
 
   function themeChanged() {
     hudColors = null;
@@ -864,8 +1104,8 @@
   renderReality();
   buildLabels();
   api.setPage(0);
-  api.setSim(state.playing || !reduced);
-  if (reduced) api.stimulate(1);
+  syncSim();
+  poseTissue();
   var startTab = remember('tab');
   setTab(startTab && TABS.indexOf(startTab) >= 0 ? startTab : 'parts');
   api.start();

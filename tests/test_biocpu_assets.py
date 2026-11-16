@@ -89,6 +89,55 @@ class ContentTests(unittest.TestCase):
             self.assertTrue(link.startswith("https://"), link)
 
 
+class FilesFitTogetherTests(unittest.TestCase):
+    """app.js, scene.js, index.html, data.js and the README are edited separately; these keep them in step."""
+
+    def setUp(self):
+        self.app = read("app.js")
+        self.scene = read("scene.js")
+        self.html = read("index.html")
+        self.data = read("data.js")
+        self.readme = " ".join(read("README.md").split())
+
+    def test_every_api_member_app_uses_is_in_the_scene_and_in_the_stub(self):
+        used = set(re.findall(r"\bapi\.([A-Za-z]+)", self.app))
+        self.assertGreaterEqual(len(used), 20)
+        scene_api = self.scene[self.scene.index("var api = {"):]
+        stub = re.search(r"function stubScene\(\) \{.*?\n  \}\n", self.app, re.S).group(0)
+        for name in sorted(used):
+            self.assertRegex(scene_api, r"\b%s:" % name, "scene.js api is missing " + name)
+            self.assertRegex(stub, r"\b%s:" % name, "the no-3D stub in app.js is missing " + name)
+
+    def test_classes_app_sets_are_styled(self):
+        self.assertIn("classList.add('nogl')", self.app)
+        self.assertIn("' today'", self.app)
+        self.assertIn("el('span', 'note'", self.app)
+        for selector in (".app.nogl ", ".callout.today .tag", ".callout.quiet .tag", ".dotrow .note"):
+            self.assertIn(selector, self.html, selector)
+
+    def test_power_rows_add_up_to_the_totals_in_the_copy(self):
+        rows = [(float(p), m) for p, m in re.findall(r"peak: ([\d.e-]+), mode: '(\w+)'", self.data)]
+        self.assertEqual(len(rows), 12)
+        self.assertAlmostEqual(sum(p for p, _ in rows), 65, delta=0.5)
+        self.assertAlmostEqual(sum(p for p, m in rows if m == "const"), 47, delta=0.5)
+        self.assertIn("about 65 W", self.data)
+        self.assertIn("About 47 W", self.data)
+
+    def test_imprint_note_matches_the_step_lengths(self):
+        durations = [int(d) for d in re.findall(r"\bdur: (\d+)", self.data)]
+        self.assertEqual(len(durations), 7)
+        self.assertIn("%d to %d s" % (min(durations), max(durations)), self.data)
+
+    def test_readme_and_data_share_the_headline_numbers(self):
+        for phrase in (
+            "20 to 100 times", "14 to 100", "2 to 10", "about 50 W", "about 65 W", "8 to 59", "about 400 cells",
+            "40 to 87%", "14 to 26 fJ", "16 nJ", "0.01 TB/cm³", "0.2 TB/cm³", "1 to 12 TB/cm³", "10,000 years",
+            "months to years", "0.3 to 0.4 mm", "about 10 million neurons", "532 nm", "5 billionths",
+        ):
+            self.assertIn(phrase, self.readme, "README: " + phrase)
+            self.assertIn(phrase, " ".join(self.data.split()), "data.js: " + phrase)
+
+
 class GlbTests(unittest.TestCase):
     def setUp(self):
         self.blob = (ROOT / "photonic-wetware-core.glb").read_bytes()

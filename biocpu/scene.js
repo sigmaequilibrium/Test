@@ -55,7 +55,7 @@
     controls.dampingFactor = 0.08;
     controls.minDistance = 8;
     controls.maxDistance = 2600;
-    controls.maxPolarAngle = Math.PI * 0.56;
+    controls.maxPolarAngle = Math.PI * 0.49; // keeps the camera above the breadboard
     controls.autoRotateSpeed = 0.55;
     controls.rotateSpeed = 0.7;
     controls.zoomSpeed = 0.8;
@@ -699,6 +699,7 @@
       ].forEach(function (w) {
         var m = add(gChamber, w[0], mGlass, w[1], w[2], w[3]);
         m.renderOrder = 3;
+        m.userData.shell = true; // see-through: a click passes to whatever is behind
         outline(m, 0xcfe3ea, 0.35);
       });
       var med = add(gChamber, box(15.1, 3.0, 15.1), glassy(cMedium, 0.085, { roughness: 0.2 }), 0, 1.55, 0);
@@ -719,6 +720,7 @@
     (function () {
       var w = add(gWindow, box(16.4, 0.17, 16.4), glassy(0xe9f6fb, 0.16), 0, 3.285, 0);
       w.renderOrder = 4;
+      w.userData.shell = true;
       outline(w, 0xd8eef6, 0.55);
       label('window', gWindow, 8.2, 3.3, 8.2, 1);
     })();
@@ -748,6 +750,7 @@
     (function () {
       var p = add(gLens, box(13, 0.5, 13), glassy(0xe4f1ff, 0.14), 0, 6.3, 0);
       p.renderOrder = 4;
+      p.userData.shell = true;
       outline(p, 0xcfe2ff, 0.5);
       var G = 18;
       var pitch = 12.4 / G;
@@ -1277,8 +1280,9 @@
     var flowT = 0;
     var _p = new THREE.Vector3();
     function updateTissue(dt) {
-      var dN = Math.exp(-dt * 5.5);
-      var dE = Math.exp(-dt * 8);
+      // glow fades only while the network runs, so a paused or primed frame stays lit
+      var dN = simOn ? Math.exp(-dt * 5.5) : 1;
+      var dE = simOn ? Math.exp(-dt * 8) : 1;
       var live = Math.floor(N * Math.min(1, Math.max(0, sig.grow)));
       var tint = sig.tint;
       var ic = somaMesh.instanceColor.array;
@@ -1356,13 +1360,18 @@
       pumpRotor.rotation.y = flowT * 2.2;
     }
     function updateLight(dt) {
-      mirrorAngle += (mirrorTarget - mirrorAngle) * Math.min(1, dt * 9);
+      mirrorAngle += (mirrorTarget - mirrorAngle) * (opts.reducedMotion ? 1 : Math.min(1, dt * 9));
       mirrorPivot.rotation.z = mirrorAngle / 2;
       // reference beam walks across the crystal face as the mirror tilts
       var run = 6.5;
       aRefIn.position.set(-5, CY + Math.tan(mirrorAngle) * run, 0);
       aRefOut.position.set(5, CY + Math.tan(mirrorAngle) * (run + 10), 0);
       bRefA.level = bRefB.level = bRefC.level = Math.max(sig.ref, sig.rec * 0.9);
+      // recording needs both beams at the recording wavelength, so the reference path turns green
+      var refCol = sig.rec > sig.ref ? cRecord : cPage;
+      bRefA.mesh.material.color.copy(refCol);
+      bRefB.mesh.material.color.copy(refCol);
+      bRefC.mesh.material.color.copy(refCol);
       bPageA.level = bPageB.level = bPageC.level = sig.page;
       bFluA.level = bFluB.level = bFluC.level = bFluD.level = sig.fluor * (0.35 + Math.min(1, activity * 30) * 0.65);
       bExc.level = sig.excite;
@@ -1458,13 +1467,15 @@
       var c = _box.getCenter(new THREE.Vector3());
       var r = _box.getSize(new THREE.Vector3()).length() / 2;
       var tanH = Math.tan((camera.fov * Math.PI) / 360);
-      var d = Math.max(30, ((r / tanH) * 1.75) / Math.min(1, camera.aspect));
-      goTo(c, d, ms == null ? 650 : ms);
+      // a part that would need the whole-module distance gets the whole-module view, so the stack stays framed
+      var f = fitParams();
+      var d = Math.max(30, ((r / tanH) * 1.3) / Math.min(1, camera.aspect));
+      if (d >= f.dist) goTo(f.target, f.dist, ms == null ? 650 : ms);
+      else goTo(c, d, ms == null ? 650 : ms);
     }
 
     // ---- picking ----------------------------------------------------------
     var pickables = [];
-    var SHELL = { chamber: 1, window: 1, lens: 1 };
     for (var pid in parts) {
       parts[pid].traverse(function (o) {
         if (o.isMesh && !o.userData.noPick && !o.isInstancedMesh) pickables.push(o);
@@ -1488,7 +1499,8 @@
       for (var i = 0; i < hits.length; i++) {
         var id = partOf(hits[i].object);
         if (!id) continue;
-        if (SHELL[id]) {
+        // glass walls, the coverslip and the lens plate let the pick through
+        if (hits[i].object.userData.shell) {
           if (!shell) shell = id;
           continue;
         }
@@ -1496,20 +1508,26 @@
       }
       return shell;
     }
+    // a pick is one primary left-button or single-finger press that stays put
     var down = null;
+    var hoverQueued = null;
     var dom = renderer.domElement;
     dom.addEventListener('pointerdown', function (ev) {
-      down = { x: ev.clientX, y: ev.clientY };
+      down = ev.isPrimary && ev.button === 0 ? { id: ev.pointerId, x: ev.clientX, y: ev.clientY } : null;
+      hoverQueued = null;
+      if (opts.onHover) opts.onHover(null, 0, 0);
     });
     dom.addEventListener('pointerup', function (ev) {
-      if (!down) return;
+      if (!down || ev.pointerId !== down.id) return;
       var moved = Math.abs(ev.clientX - down.x) + Math.abs(ev.clientY - down.y);
       down = null;
       if (moved < 6 && opts.onPick) opts.onPick(pickAt(ev.clientX, ev.clientY));
     });
-    var hoverQueued = null;
+    dom.addEventListener('pointercancel', function () {
+      down = null;
+    });
     dom.addEventListener('pointermove', function (ev) {
-      if (ev.pointerType === 'touch' || down) return;
+      if (ev.pointerType === 'touch' || ev.buttons) return;
       hoverQueued = { x: ev.clientX, y: ev.clientY };
     });
     dom.addEventListener('pointerleave', function () {
@@ -1538,6 +1556,9 @@
     function resize() {
       var w = Math.max(1, container.clientWidth);
       var h = Math.max(1, container.clientHeight);
+      // browser zoom or a move to another monitor changes the device pixel ratio
+      var pr = Math.min(window.devicePixelRatio || 1, 2);
+      if (pr !== renderer.getPixelRatio()) renderer.setPixelRatio(pr);
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
@@ -1554,7 +1575,11 @@
     if (window.ResizeObserver) {
       ro = new ResizeObserver(function () {
         resize();
-        if (!running) renderOnce();
+        // setSize clears the drawing buffer and this runs after the frame's rAF, so redraw now
+        if (running) {
+          renderer.render(scene, camera);
+          if (opts.afterFrame) opts.afterFrame(api);
+        } else renderOnce();
       });
       ro.observe(container);
     } else window.addEventListener('resize', resize);
@@ -1653,6 +1678,15 @@
       },
       setPage: setPage,
       stimulate: stimulate,
+      // run the network by hand: stepSim advances it, prime poses a lit still frame while the sim is off
+      stepSim: function (n) {
+        for (var i = 0; i < (n || 1); i++) simStep();
+      },
+      prime: function (frac) {
+        stimulate(frac == null ? 1 : frac);
+        simStep();
+        simStep();
+      },
       setSim: function (on) {
         simOn = !!on;
       },
@@ -1664,6 +1698,8 @@
           inbox[0][i] = inbox[1][i] = inbox[2][i] = inbox[3][i] = 0;
         }
         for (var e = 0; e < E; e++) eGlow[e] = 0;
+        // electrode glow no longer fades by itself while the sim is off
+        for (var k = 0; k < elecGlow.length; k++) elecGlow[k] = 0;
         activity = 0;
       },
       setExplode: function (t, refit) {
@@ -1686,6 +1722,16 @@
       },
       setAutoRotate: function (on) {
         controls.autoRotate = !!on;
+      },
+      // keyboard route: turn by dAz and dPolar radians about the target, scale the distance by zoom
+      orbit: function (dAz, dPolar, zoom) {
+        tween = null;
+        var off = camera.position.clone().sub(controls.target);
+        var sph = new THREE.Spherical().setFromVector3(off);
+        sph.theta += dAz || 0;
+        sph.phi = Math.min(controls.maxPolarAngle, Math.max(0.05, sph.phi + (dPolar || 0)));
+        sph.radius = Math.min(controls.maxDistance, Math.max(controls.minDistance, sph.radius * (zoom || 1)));
+        camera.position.copy(controls.target).add(off.setFromSpherical(sph));
       },
       setToday: function (on) {
         todayOn = !!on;
