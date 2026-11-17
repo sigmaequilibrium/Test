@@ -1,0 +1,389 @@
+<title>Photonic Wetware Core</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a one-screen instrument. A dark optical-bench stage holds the 3D model;
+   a reading panel beside it (below it on a phone) carries parts, run cycle,
+   imprint pipeline, power and reality check. The stage stays dark in both themes
+   because the beams are drawn as light. */
+:root {
+  --bg: #f6f2f6; --surface: #ffffff; --surface-2: #ece5ed; --ink: #241a27; --ink-2: #5c4f61; --ink-3: #6b5e70; --line: #dcd2de;
+  --accent: #b3225a; --accent-soft: #f6dbe6; --on-accent: #ffffff;
+  --stage: #140e17; --stage-hi: #241a29; --stage-ink: #f5edf4; --stage-ink-2: #bcaec0; --stage-line: #43364a; --stage-accent: #ff8fb5;
+  --ok: #17794f; --mid: #9a5a00; --spec: #7446c4;
+  --w-page: #ff5630; --w-fluor: #3be38f; --w-excite: #3aa0ff; --w-record: #b8f03c; --w-medium: #e8527a; --w-gold: #e0aa4a;
+  --f-display: 'Bricolage Grotesque', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+  --f-body: 'IBM Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --gl: max(16px, env(safe-area-inset-left, 0px));
+  --gr: max(16px, env(safe-area-inset-right, 0px));
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #18121b; --surface: #221a27; --surface-2: #2c2232; --ink: #f3ebf3; --ink-2: #c2b3c6; --ink-3: #a093a6; --line: #3c2f42;
+    --accent: #ff86b2; --accent-soft: #47202f; --on-accent: #2a0b18;
+    --stage: #0e0911; --stage-hi: #1e1623; --stage-ink: #f5edf4; --stage-ink-2: #b7a8bb; --stage-line: #3d3044; --stage-accent: #ff8fb5;
+    --ok: #56d6a0; --mid: #f0b24c; --spec: #c4a2ff;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #18121b; --surface: #221a27; --surface-2: #2c2232; --ink: #f3ebf3; --ink-2: #c2b3c6; --ink-3: #a093a6; --line: #3c2f42;
+  --accent: #ff86b2; --accent-soft: #47202f; --on-accent: #2a0b18;
+  --stage: #0e0911; --stage-hi: #1e1623; --stage-ink: #f5edf4; --stage-ink-2: #b7a8bb; --stage-line: #3d3044; --stage-accent: #ff8fb5;
+  --ok: #56d6a0; --mid: #f0b24c; --spec: #c4a2ff;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 400 14px/1.5 var(--f-body); overflow: hidden; -webkit-font-smoothing: antialiased; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stage :focus-visible { outline-color: var(--stage-accent); }
+/* The stage itself takes focus for the arrow-key orbit. Its own outline would be painted under the canvas,
+   so the ring is drawn just inside the edge on the labels layer, which lies over the canvas. */
+.stage:focus-visible { outline: none; }
+.stage:focus-visible > .labels { outline: 2px solid var(--stage-accent); outline-offset: -2px; }
+h1, h2, h3, p, ul, ol, dl, dd, figure { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+a { color: var(--accent); text-underline-offset: 2px; }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+
+.app { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) clamp(340px, 32vw, 450px); }
+
+/* ---------- stage ---------- */
+/* Layers, bottom to top: canvas, vignette, scrim then masthead and legend (1), labels (2), controls (3), tooltip (4).
+   A part label that lands on the masthead or legend text covers it and stays readable; app.js leaves out one that would land on the controls. */
+.stage { position: relative; isolation: isolate; min-width: 0; min-height: 0; overflow: hidden; background: var(--stage); color: var(--stage-ink); }
+.stage canvas.gl, .stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+.stage > canvas:active { cursor: grabbing; }
+.stage::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 90% at 55% 45%, transparent 55%, var(--stage) 100%); opacity: .8; }
+/* Scrim behind the masthead and the control row. It sits over the canvas but under the labels (z-index 2), so it does not dim them. */
+.stage::before { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: .86;
+  background: linear-gradient(180deg, var(--stage) 0, transparent 24%), linear-gradient(0deg, var(--stage) 0, transparent 20%); }
+.stage-ui { position: absolute; inset: 0; pointer-events: none; display: grid;
+  grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto 1fr auto; gap: 10px;
+  padding-block: 16px; padding-left: var(--gl); padding-right: var(--gr); }
+.stage-ui > * { pointer-events: auto; z-index: 1; }
+.masthead { grid-column: 1 / -1; max-width: 30rem; pointer-events: none; }
+.eyebrow { font: 500 10.5px/1.3 var(--f-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--stage-ink-2); }
+.masthead h1 { font: 700 clamp(22px, 2.6vw, 34px)/1.02 var(--f-display); letter-spacing: -.015em; margin-top: 6px; text-wrap: balance; }
+.lede { margin-top: 8px; color: var(--stage-ink-2); font-size: 13.5px; max-width: 27rem; text-wrap: pretty; }
+/* The legend has no backing and can lie over the model on a narrow or short stage: a halo in the stage colour keeps it readable there. */
+.legend { grid-row: 3; grid-column: 1; align-self: end; display: grid; gap: 3px; font: 400 11px/1.35 var(--f-mono); color: var(--stage-ink-2); pointer-events: none;
+  text-shadow: 0 0 2px var(--stage), 0 0 5px var(--stage), 0 0 8px var(--stage); }
+.legend li { display: flex; align-items: center; gap: 7px; }
+.legend i { width: 14px; height: 3px; border-radius: 2px; flex: none; }
+.legend .note { margin-top: 5px; max-width: 24rem; font-family: var(--f-body); font-size: 11.5px; }
+.controls { grid-row: 3; grid-column: 2; z-index: 3; align-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
+.ctl { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 11px; border-radius: 16px; border: 1px solid var(--stage-line);
+  background: color-mix(in srgb, var(--stage-hi) 86%, transparent); color: var(--stage-ink); font: 500 12px/1 var(--f-body); }
+button.ctl:hover { border-color: var(--stage-ink-2); }
+button.ctl[aria-pressed="true"] { background: var(--stage-ink); color: var(--stage); border-color: var(--stage-ink); }
+.ctl input[type="range"] { width: 92px; accent-color: var(--stage-accent); }
+
+.labels { position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden; }
+.callout { position: absolute; left: 0; top: 0; width: 0; height: 0; border: 0; padding: 0; background: none; pointer-events: none; }
+.callout .dot { position: absolute; left: -3px; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--stage-ink); box-shadow: 0 0 0 2px var(--stage); }
+.callout::before { content: ""; position: absolute; top: 0; left: 4px; width: 16px; height: 1px; background: var(--stage-ink-2); opacity: .7; }
+.callout.left::before { left: auto; right: 4px; }
+.callout .tag { position: absolute; left: 22px; top: -11px; white-space: nowrap; pointer-events: auto; cursor: pointer;
+  font: 500 11px/1 var(--f-mono); color: var(--stage-ink); padding: 5px 7px; border-radius: 4px;
+  background: color-mix(in srgb, var(--stage-hi) 82%, transparent); border: 1px solid var(--stage-line); }
+.callout.left .tag { left: auto; right: 22px; }
+.callout .tag:hover, .callout.sel .tag { border-color: var(--stage-accent); }
+.callout.quiet .tag { background: none; border-color: transparent; color: var(--stage-ink-2); cursor: default; pointer-events: none; }
+.callout.quiet .dot, .callout.quiet::before { display: none; }
+/* Captions wrap instead of running off the stage. The callout root is 0 wide, so the tag needs
+   width: max-content to keep one line while there is room; app.js caps it with an inline max-width.
+   A wrapped caption grows upward, away from the control row; the real-size caption hangs below
+   its anchor instead, clear of the masthead. */
+.callout.quiet .tag, .callout.today .tag { white-space: normal; width: max-content; line-height: 1.3; }
+.callout.quiet .tag { left: 6px; top: auto; bottom: -11px; padding: 3px 4px; }
+.callout.today .tag { top: -11px; bottom: auto; background: color-mix(in srgb, var(--stage) 78%, transparent); }
+.tip { position: absolute; z-index: 4; pointer-events: none; transform: translate(12px, 14px); width: max-content; max-width: calc(100% - 20px);
+  font: 500 12px/1.2 var(--f-body); color: var(--stage); background: var(--stage-ink); padding: 5px 8px; border-radius: 4px; }
+.tip small { font: 400 10.5px/1 var(--f-mono); opacity: .7; margin-left: 6px; text-transform: uppercase; letter-spacing: .05em; }
+.fallback { position: absolute; inset: 0; z-index: 1; display: grid; place-content: center; text-align: center; gap: 6px; padding: 24px; color: var(--stage-ink-2); }
+.fallback strong { color: var(--stage-ink); font: 700 18px/1.2 var(--f-display); }
+/* no 3D view (app.js adds .nogl): drop what only describes the model */
+.app.nogl .legend { display: none; }
+.app.nogl .hud:nth-child(2) { display: none; }
+.app.nogl .huds { grid-template-columns: minmax(0, 12rem); }
+
+/* ---------- panel ---------- */
+.panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); border-left: 1px solid var(--line); }
+.tabs { display: flex; gap: 2px; padding: 10px var(--gr) 0 var(--gl); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; flex: none; }
+.tabs::-webkit-scrollbar { display: none; }
+/* Tabs grow to fill the strip, so the side padding only sets the minimum: 6px lets all five fit the 340px panel. */
+.tab { flex: 1 0 auto; border: 0; background: none; padding: 8px 6px 10px; font: 500 13px/1 var(--f-body); color: var(--ink-2); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.pane { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px var(--gr) 28px var(--gl); display: flex; flex-direction: column; gap: 18px; }
+.pane:focus-visible { outline-offset: -2px; }
+.pane h2 { font: 700 19px/1.15 var(--f-display); letter-spacing: -.01em; text-wrap: balance; }
+.pane h3 { font: 500 10.5px/1.3 var(--f-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); }
+.pane p { max-width: 62ch; }
+.muted { color: var(--ink-2); }
+.small { font-size: 12.5px; }
+.stack { display: flex; flex-direction: column; gap: 8px; }
+.stack-l { display: flex; flex-direction: column; gap: 14px; }
+
+.st { display: inline-flex; align-items: center; gap: 5px; font: 500 10.5px/1 var(--f-mono); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; color: var(--ink-2); }
+.st i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--c); flex: none; }
+.st-demonstrated { --c: var(--ok); } .st-demonstrated i { background: var(--c); }
+.st-emerging { --c: var(--mid); } .st-emerging i { background: linear-gradient(90deg, var(--c) 50%, transparent 50%); }
+.st-speculative { --c: var(--spec); }
+.key { display: grid; gap: 7px; }
+.key li { display: grid; grid-template-columns: 8.2em minmax(0, 1fr); gap: 10px; align-items: baseline; font-size: 12.5px; color: var(--ink-2); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.card .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.card .head h2 { min-width: 0; }
+.linkbtn { border: 0; background: none; padding: 0; color: var(--accent); font: 500 12.5px/1.2 var(--f-body); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; flex: none; }
+.facts { display: grid; grid-template-columns: minmax(0, 9.5em) minmax(0, 1fr); gap: 5px 12px; font-size: 12.5px; padding-top: 10px; border-top: 1px solid var(--line); }
+.facts dt { color: var(--ink-3); }
+.facts dd { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: 12px; overflow-wrap: anywhere; }
+.noteline { font-size: 12px; color: var(--ink-3); }
+
+.partlist { display: flex; flex-direction: column; }
+.partrow { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 10px; text-align: left; border: 0; background: none;
+  padding: 8px 6px; border-top: 1px solid var(--line); }
+.partrow:hover { background: var(--surface-2); }
+.partrow[aria-current="true"] { background: var(--accent-soft); }
+.partrow .sw { width: 10px; height: 10px; border-radius: 2px; background: var(--sw, var(--ink-3)); box-shadow: inset 0 0 0 1px var(--ink-3); }
+.partrow .nm { min-width: 0; overflow-wrap: anywhere; }
+
+/* run + imprint */
+.transport { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* Play all scrolls the list to follow the active step, so its Stop button stays pinned to the top of the pane.
+   -16px cancels the pane's top padding; 52px is the pinned bar plus a gap. */
+#pane-imprint .transport { position: sticky; top: -16px; z-index: 1; margin: -8px calc(-1 * var(--gr)) -8px calc(-1 * var(--gl)); padding: 8px var(--gr) 8px var(--gl); background: var(--bg); }
+#imprint-steps .step { scroll-margin-top: 52px; }
+.btn { height: 32px; padding: 0 14px; border-radius: 16px; border: 1px solid var(--ink); background: var(--ink); color: var(--bg); font: 500 12.5px/1 var(--f-body); min-width: 68px; }
+.btn.ghost { background: none; color: var(--ink); border-color: var(--line); }
+.transport input[type="range"] { flex: 1 1 120px; min-width: 0; accent-color: var(--accent); }
+.huds { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.hud { display: flex; flex-direction: column; gap: 6px; }
+.hud canvas { width: 100%; aspect-ratio: 1; max-width: 100%; border-radius: 4px; background: var(--stage); display: block; }
+.hud figcaption { font-size: 11.5px; color: var(--ink-2); line-height: 1.35; }
+.tokens { font: 400 13px/1.7 var(--f-mono); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; min-height: 3.6em; overflow-wrap: anywhere; }
+.tokens .prompt { color: var(--ink-3); }
+.tokens .tok { border-bottom: 2px solid var(--accent); margin-left: .5ch; }
+.tokens .tok.new { background: var(--accent-soft); }
+.steps { display: flex; flex-direction: column; counter-reset: step; }
+.step { counter-increment: step; width: 100%; text-align: left; border: 0; background: none; display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 4px 10px;
+  padding: 10px 6px; border-top: 1px solid var(--line); }
+.step::before { content: counter(step); grid-row: 1 / span 3; font: 500 12px/20px var(--f-mono); width: 20px; height: 20px; text-align: center; border-radius: 50%; border: 1px solid var(--line); color: var(--ink-2); }
+.step:hover { background: var(--surface-2); }
+.step[aria-current="step"] { background: var(--accent-soft); }
+.step[aria-current="step"]::before { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.step .ttl { font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.step .body { color: var(--ink-2); font-size: 12.5px; }
+.step .pw { font: 400 11.5px/1.4 var(--f-mono); color: var(--ink-3); }
+
+/* power */
+.dots { display: flex; flex-direction: column; }
+/* Rows and axis share one column template in em, so they must share a font-size or the ticks drift off the tracks. */
+.dotrow, .axis { display: grid; grid-template-columns: minmax(0, 9.2em) minmax(0, 1fr) 5.6em; column-gap: 10px; font-size: 12.5px; }
+.dotrow { align-items: center; row-gap: 3px; padding: 6px 0; border-top: 1px solid var(--line); }
+.dotrow .nm { min-width: 0; overflow-wrap: anywhere; line-height: 1.25; }
+.dotrow .val { text-align: right; font: 400 12px/1 var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dotrow .note { grid-column: 1 / -1; max-width: 72ch; font-size: 11.5px; line-height: 1.35; color: var(--ink-2); }
+.track { position: relative; height: 18px; background: repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px calc(100% / var(--decades)));
+  border-right: 1px solid var(--line); }
+.track .peak { position: absolute; top: 3px; bottom: 3px; width: 2px; margin-left: -1px; background: var(--ink-3); }
+.track .dot { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--ink-3); box-shadow: 0 0 0 2px var(--bg); transition: left .25s linear; }
+.dotrow.hot .dot { background: var(--accent); }
+.dotrow.off .dot { background: var(--bg); box-shadow: 0 0 0 1.5px var(--ink-3) inset, 0 0 0 2px var(--bg); }
+.axis { color: var(--ink-3); padding-top: 5px; border-top: 1px solid var(--line); }
+.axis .ticks { position: relative; height: 12px; font: 400 10.5px/1 var(--f-mono); container-type: inline-size; }
+.axis .ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.axis .ticks span:first-child { transform: none; }
+.axis .ticks span:last-child { transform: translateX(-100%); }
+/* The four labels need about 176px of track; on a narrower one (phones, the 340px side panel) keep the two ends. */
+@container (max-width: 190px) { .axis .ticks span:not(:first-child):not(:last-child) { display: none; } }
+.claim { border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.claim .q { font-weight: 600; }
+.verdict { font: 500 10.5px/1 var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; }
+.verdict i { width: 14px; height: 8px; border-radius: 2px; background: linear-gradient(90deg, var(--ink-2) var(--fill, 50%), var(--line) var(--fill, 50%)); }
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { text-align: left; padding: 6px 8px 6px 0; border-top: 1px solid var(--line); vertical-align: top; }
+th { font: 500 10.5px/1.3 var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); border-top: 0; }
+td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.bullets { display: flex; flex-direction: column; gap: 8px; }
+.bullets li { padding-left: 14px; position: relative; max-width: 62ch; }
+.bullets li::before { content: ""; position: absolute; left: 0; top: .62em; width: 6px; height: 1.5px; background: var(--ink-3); }
+.sources { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--ink-2); }
+.sources li { overflow-wrap: anywhere; }
+
+/* Breakpoints, widest first; a later block may override an earlier one.
+   1180px: the control row (about 490px) gets its own row, so the legend keeps the full stage width.
+   860px: stage above panel. 480px: phone, no legend, one compact control row. 360px: smallest phones.
+   Last: a phone on its side goes back to side by side, with the phone's compact stage. */
+@media (max-width: 1180px) {
+  .stage-ui { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr auto auto; }
+  .controls { grid-column: 1; grid-row: 4; justify-content: flex-start; }
+}
+/* a short, wide window (a large phone on its side, a squat browser): the lede and legend would cover the model */
+@media (min-width: 861px) and (max-height: 560px) {
+  .lede, .legend { display: none; }
+  .stage-ui { grid-template-rows: auto 1fr auto; }
+  .controls { grid-row: 3; }
+}
+@media (max-width: 860px) {
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(260px, 48%) minmax(0, 1fr); }
+  .panel { border-left: 0; border-top: 1px solid var(--line); }
+  .lede, .legend .note { display: none; }
+  .stage-ui { padding-block: 12px; }
+  .legend { font-size: 10px; display: flex; flex-wrap: wrap; gap: 2px 14px; max-width: 30rem; }
+  .ctl input[type="range"] { width: 70px; }
+  .ctl { height: 30px; padding: 0 9px; }
+  /* everything in the stage is absolutely positioned, so an auto row would collapse: fixed height for masthead plus message */
+  .app.nogl { grid-template-rows: 190px minmax(0, 1fr); }
+  .app.nogl .fallback { align-content: end; }
+}
+@media (max-width: 480px) {
+  .legend { display: none; }
+  .stage-ui { grid-template-rows: auto 1fr auto; }
+  .controls { grid-column: 1 / -1; grid-row: 3; justify-content: space-between; flex-wrap: nowrap; gap: 4px; }
+  .ctl .xl, #btn-spin { display: none; }
+  .ctl { padding: 0 8px; gap: 6px; }
+  .ctl input[type="range"] { width: 64px; }
+  .masthead h1 { font-size: 20px; }
+  .dotrow, .axis { grid-template-columns: minmax(0, 7.4em) minmax(0, 1fr) 5.2em; column-gap: 8px; }
+}
+@media (max-width: 360px) {
+  .ctl { white-space: nowrap; padding: 0 6px; }
+  .ctl input[type="range"] { width: 44px; }
+  .tab { padding-inline: 5px; }
+}
+@media (max-width: 860px) and (max-height: 500px) and (orientation: landscape) {
+  .app, .app.nogl { grid-template-columns: minmax(0, 1fr) minmax(300px, 46%); grid-template-rows: none; }
+  .panel { border-top: 0; border-left: 1px solid var(--line); }
+  .app.nogl .fallback { align-content: center; }
+  .legend { display: none; }
+  .stage-ui { grid-template-rows: auto 1fr auto; }
+  .controls { grid-column: 1 / -1; grid-row: 3; justify-content: flex-start; flex-wrap: wrap; }
+  .ctl .xl, #btn-spin { display: none; }
+  .ctl { padding: 0 8px; gap: 6px; }
+  .ctl input[type="range"] { width: 64px; }
+  .masthead h1 { font-size: 20px; }
+  .tab { padding-inline: 4px; }
+  .dotrow, .axis { grid-template-columns: minmax(0, 7.4em) minmax(0, 1fr) 5.2em; column-gap: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .track .dot { transition: none; } }
+</style>
+
+<div class="app">
+  <section class="stage" id="stage" aria-label="3D model of the concept module">
+    <div class="fallback" id="fallback" hidden>
+      <strong>The 3D view could not start here</strong>
+      <span>The parts, run cycle, imprint pipeline and power budget are all in the panel.</span>
+    </div>
+    <div class="labels" id="labels"></div>
+    <div class="stage-ui">
+      <header class="masthead">
+        <p class="eyebrow">Concept model &middot; no such device exists</p>
+        <h1>Photonic Wetware Core</h1>
+        <p class="lede" id="lede"></p>
+      </header>
+      <ul class="legend" id="legend" aria-label="Light paths"></ul>
+      <div class="controls">
+        <label class="ctl" for="explode">Explode <input type="range" id="explode" min="0" max="100" value="0" step="1"></label>
+        <button class="ctl" id="btn-today" type="button" aria-pressed="false"><span>Real-size<span class="xl"> unit</span></span></button>
+        <button class="ctl" id="btn-labels" type="button" aria-pressed="true">Labels</button>
+        <button class="ctl" id="btn-spin" type="button" aria-pressed="false">Spin</button>
+        <button class="ctl" id="btn-reset" type="button"><span>Reset<span class="xl"> view</span></span></button>
+      </div>
+    </div>
+    <div class="tip" id="tip" hidden></div>
+  </section>
+
+  <aside class="panel">
+    <div class="tabs" role="tablist" aria-label="Views">
+      <button class="tab" role="tab" id="tab-parts" aria-controls="pane-parts" aria-selected="true" type="button">Parts</button>
+      <button class="tab" role="tab" id="tab-run" aria-controls="pane-run" aria-selected="false" tabindex="-1" type="button">Run</button>
+      <button class="tab" role="tab" id="tab-imprint" aria-controls="pane-imprint" aria-selected="false" tabindex="-1" type="button">Imprint</button>
+      <button class="tab" role="tab" id="tab-power" aria-controls="pane-power" aria-selected="false" tabindex="-1" type="button">Power</button>
+      <button class="tab" role="tab" id="tab-reality" aria-controls="pane-reality" aria-selected="false" tabindex="-1" type="button">Reality check</button>
+    </div>
+
+    <div class="pane" role="tabpanel" id="pane-parts" aria-labelledby="tab-parts" tabindex="0">
+      <div id="detail"></div>
+      <div id="partgroups" class="stack-l"></div>
+    </div>
+
+    <div class="pane" role="tabpanel" id="pane-run" aria-labelledby="tab-run" tabindex="0" hidden>
+      <div class="stack">
+        <h2>One token, start to finish</h2>
+        <p class="muted" id="run-intro"></p>
+      </div>
+      <div class="transport">
+        <button class="btn" id="run-play" type="button">Pause</button>
+        <input type="range" id="run-scrub" min="0" max="1000" value="0" step="1" aria-label="Position in the cycle">
+        <span class="mono small muted" id="run-clock">0.0 s</span>
+      </div>
+      <div class="huds">
+        <figure class="hud"><canvas id="hud-page" width="264" height="264" role="img" aria-label="Spot pattern of the memory page being read"></canvas><figcaption id="hud-page-cap">Page leaving the crystal</figcaption></figure>
+        <figure class="hud"><canvas id="hud-act" width="264" height="264" role="img" aria-label="Live activity in the tissue as seen by the imager"></canvas><figcaption>What the imager sees: cells that are firing</figcaption></figure>
+      </div>
+      <div class="stack">
+        <h3>Output so far (illustrative)</h3>
+        <div class="tokens" id="tokens" aria-live="off"></div>
+      </div>
+      <ol class="steps" id="run-steps"></ol>
+    </div>
+
+    <div class="pane" role="tabpanel" id="pane-imprint" aria-labelledby="tab-imprint" tabindex="0" hidden>
+      <div class="stack">
+        <h2>From a digital model to living tissue</h2>
+        <p class="muted" id="imprint-intro"></p>
+      </div>
+      <div class="transport">
+        <button class="btn" id="imprint-play" type="button">Play all</button>
+        <span class="small muted" id="imprint-note"></span>
+      </div>
+      <ol class="steps" id="imprint-steps"></ol>
+    </div>
+
+    <div class="pane" role="tabpanel" id="pane-power" aria-labelledby="tab-power" tabindex="0" hidden>
+      <div class="stack">
+        <h2 id="power-title"></h2>
+        <p class="muted" id="power-intro"></p>
+      </div>
+      <div class="stack">
+        <h3 id="power-chart-title">Draw right now, by part (log scale)</h3>
+        <div class="dots" id="power-dots" role="list" aria-labelledby="power-chart-title"></div>
+        <div class="axis" aria-hidden="true"><span></span><div class="ticks" id="power-ticks"></div><span></span></div>
+        <p class="noteline" id="power-key"></p>
+      </div>
+      <div id="power-claims" class="stack-l"></div>
+      <div class="stack">
+        <h3>Against silicon</h3>
+        <div class="tbl-wrap"><table id="power-compare"></table></div>
+      </div>
+    </div>
+
+    <div class="pane" role="tabpanel" id="pane-reality" aria-labelledby="tab-reality" tabindex="0" hidden>
+      <div class="stack">
+        <h2>What is real, what is not</h2>
+        <p class="muted" id="reality-intro"></p>
+      </div>
+      <div id="reality-body" class="stack-l"></div>
+    </div>
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.147.0/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/environments/RoomEnvironment.js"></script>
+<script src="data.js"></script>
+<script src="scene.js"></script>
+<script src="app.js"></script>
